@@ -1,35 +1,56 @@
-# PixelRAG
+# PixleRAG
 
-A two-part visual document retrieval system.  
-Documents (PDFs, images) are rendered to image tiles and embedded with **Qwen3-VL-Embedding-2B** — no text parsing anywhere.  
-Retrieval is powered by FAISS; answers are synthesised by **gpt-4o** vision.
+**PixleRAG** is a visual document retrieval and question-answering system that works entirely from page images — no text extraction, no OCR, no parsing. It embeds document pages as images, retrieves the most relevant ones with FAISS, and uses GPT-4o vision to read and answer questions directly from the visual content.
+
+This makes it effective for documents where text extraction fails or loses meaning: scanned PDFs, charts, figures, tables, invoices, forms, and mixed-layout reports.
 
 ---
 
-## Architecture
+## When to use it
+
+| Use case | Why PixleRAG works |
+|---|---|
+| Scanned PDFs | No OCR needed — pages are embedded as images |
+| Charts & figures | GPT-4o reads visual data directly |
+| Invoices & forms | Preserves layout and structure |
+| Mixed-content docs | Text and visuals treated uniformly |
+| Any PDF where copy-paste loses meaning | Pixel-level fidelity |
+
+---
+
+## How it works
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  PART 1 — Google Colab (GPU)                        │
-│  colab_embed_server.ipynb                           │
-│  • Loads Qwen3-VL-Embedding-2B (fp16, CUDA)         │
-│  • FastAPI: POST /embed_image  POST /embed_text     │
-│  • Exposed via ngrok HTTPS tunnel                   │
-└────────────────────┬────────────────────────────────┘
-                     │ HTTP (ngrok)
-┌────────────────────▼────────────────────────────────┐
-│  PART 2 — Local machine                             │
-│  app.py  (Streamlit GUI)                            │
-│  ├── ingest.py   render PDF/image → tiles → embed   │
-│  ├── search.py   embed query → FAISS search         │
-│  ├── answer.py   gpt-4o vision synthesis            │
-│  └── embed_client.py  HTTP calls to Colab server   │
-│                                                     │
-│  data/tiles/     saved tile PNGs                    │
-│  data/index.faiss  FAISS flat inner-product index   │
-│  data/metadata.json  vector_id → source/page/path  │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  Google Colab (GPU)                                      │
+│  colab_embed_server.ipynb                                │
+│  • Loads Qwen3-VL-Embedding-2B (fp16, CUDA)              │
+│  • Serves POST /embed_image  and  POST /embed_text       │
+│  • Exposed via ngrok HTTPS tunnel                        │
+└─────────────────────┬────────────────────────────────────┘
+                      │ HTTPS (ngrok)
+┌─────────────────────▼────────────────────────────────────┐
+│  Local machine                                           │
+│                                                          │
+│  app.py          Streamlit GUI                           │
+│  api.py          FastAPI REST endpoints                  │
+│  ingest.py       PDF/image → page tiles → embeddings     │
+│  search.py       Query embedding → FAISS + MMR retrieval │
+│  answer.py       Rerank → crop figure → GPT-4o answer    │
+│  embed_client.py HTTP client for the Colab server        │
+│                                                          │
+│  data/tiles/         saved tile PNGs                     │
+│  data/index.faiss    FAISS flat inner-product index      │
+│  data/metadata.json  vector_id → source / page / path   │
+└──────────────────────────────────────────────────────────┘
 ```
+
+**Answer pipeline:**
+1. Query is embedded on Colab → FAISS retrieves top candidates
+2. MMR diversifies results (avoids duplicate pages)
+3. GPT-4o reranker promotes the page most relevant to the question
+4. If a figure is referenced, GPT-4o crops and upscales the region
+5. GPT-4o reads the final page(s) at high resolution and synthesises the answer
 
 ---
 
@@ -38,11 +59,11 @@ Retrieval is powered by FAISS; answers are synthesised by **gpt-4o** vision.
 ### Prerequisites
 
 - Python 3.10+
+- A Google account with [Google Colab](https://colab.research.google.com) access
 - A free [ngrok account](https://ngrok.com) (for the Colab tunnel)
-- An [OpenAI API key](https://platform.openai.com/api-keys) (for answer synthesis)
-- A Google account with access to [Google Colab](https://colab.research.google.com)
+- An [OpenAI API key](https://platform.openai.com/api-keys)
 
-### 1. Install local dependencies
+### 1. Install dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -52,74 +73,130 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Edit .env and fill in OPENAI_API_KEY
-# (EMBED_API_URL is filled in after step 3)
+```
+
+Edit `.env`:
+
+```env
+EMBED_API_URL=https://xxxx-xx-xx-xxx-xxx.ngrok-free.app   # filled after step 3
+OPENAI_API_KEY=sk-...
 ```
 
 ### 3. Start the Colab embedding server
 
-1. Open `colab_embed_server.ipynb` in Google Colab.
-2. Set **Runtime → Change runtime type → T4 GPU**.
-3. Paste your ngrok authtoken into Cell 2.
-4. **Run all cells** (Runtime → Run all).
-5. Wait for the final cell to print:
+1. Open `colab_embed_server.ipynb` in Google Colab
+2. Set **Runtime → Change runtime type → T4 GPU**
+3. Paste your ngrok authtoken into Cell 2
+4. **Run all cells** — the last cell prints:
    ```
    ✅  Embedding server is live at: https://xxxx-xx-xx-xxx-xxx.ngrok-free.app
    ```
-6. Copy that URL.
+5. Copy that URL into `EMBED_API_URL` in your `.env`
 
-### 4. Start the local app
+> **Note:** The ngrok URL changes every time the Colab session restarts (idle timeout ~90 min, hard limit 12 h on free tier). Re-run the notebook and update the URL when this happens.
 
-```bash
-# Option A: set EMBED_API_URL before launching
-EMBED_API_URL=https://xxxx-xx-xx-xxx-xxx.ngrok-free.app streamlit run app.py
+### 4. Adjust settings (optional)
 
-# Option B: launch and paste the URL into the sidebar settings field
-streamlit run app.py
+Edit `config.yaml` to change behaviour without touching code:
+
+```yaml
+reranker: gpt-4o                    # "gpt-4o" or "jina-reranker-v2-base-multimodal"
+top_k: 5                            # pages returned per query
+mmr_lambda: 0.4                     # diversity vs relevance (0=diverse, 1=relevant)
+rerank_top_n: 4                     # pages sent to GPT-4o for final answer
+pdf_dpi: 300                        # rendering resolution
+answer_model: gpt-4o                # model used for reranking and answering
+crop_min_px: 900                    # minimum crop width when zooming into a figure
 ```
 
 ---
 
-## Usage
+## Streamlit GUI
 
-1. **Upload & Index tab** — drag in PDFs or images, click "Index uploaded files".  
-   Each file is rendered page-by-page to PNG tiles, embedded via the Colab server, and stored in `data/`.
+```bash
+streamlit run app.py
+```
 
-2. **Search tab** — type a question, click Search.  
-   The query is embedded on Colab, FAISS finds the closest tiles, and gpt-4o reads those tiles to write the answer.
+The GUI has three tabs:
 
-3. **Manage Index tab** — view stats or clear the index for a fresh start.
+**Upload & Index**
+- Drag in one or more PDFs or images
+- Click **Index uploaded files**
+- Each page is rendered, embedded, and stored in `data/`
+
+**Search & Ask**
+- Type a natural language question
+- Click **Search** to retrieve relevant pages with similarity scores
+- Click **Ask** for a full answer synthesised from the top pages
+- Page images are displayed alongside the answer
+
+**Manage Index**
+- View which files are indexed and how many pages each has
+- Clear the entire index to start fresh
 
 ---
 
-## Important: URL refresh
+## REST API
 
-The ngrok URL **changes every time the Colab notebook restarts**.  
-Causes of restart:
-- Colab idle timeout (~90 minutes of inactivity)
-- 12-hour session limit (free tier)
-- Manual restart or browser close
+```bash
+uvicorn api:app --reload --port 8080
+```
 
-When this happens:
-1. Re-run all cells in the notebook.
-2. Copy the new URL from the last cell.
-3. Paste it into the Streamlit sidebar (or update `.env` and restart the app).
+Interactive docs available at `http://localhost:8080/docs`
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Liveness check — also pings the embed server |
+| `POST` | `/ingest` | Upload a PDF or image file and index it |
+| `GET` | `/index` | List all indexed files and page counts |
+| `DELETE` | `/index` | Clear the entire index |
+| `POST` | `/search` | Retrieve relevant pages for a query (no answer) |
+| `POST` | `/ask` | Full pipeline: retrieve → rerank → answer |
+
+### Example: ask a question
+
+```bash
+curl -X POST http://localhost:8080/ask \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What is the total amount on the invoice?", "top_k": 5}'
+```
+
+```json
+{
+  "query": "What is the total amount on the invoice?",
+  "answer": "The total amount is $4,320.00, as shown in Image 1 (invoice.pdf, page 1).",
+  "retrieved": [
+    {"source": "invoice.pdf", "page": 1, "score": 0.9821},
+    {"source": "invoice.pdf", "page": 2, "score": 0.7134}
+  ]
+}
+```
+
+### Example: ingest a file
+
+```bash
+curl -X POST http://localhost:8080/ingest \
+  -F "file=@report.pdf"
+```
 
 ---
 
 ## Project structure
 
 ```
-colab_embed_server.ipynb   Colab notebook — embedding server
-embed_client.py            HTTP client for the Colab server
-ingest.py                  PDF/image → tiles → FAISS
-search.py                  Query → FAISS → SearchResult list
-answer.py                  gpt-4o vision answer synthesis
 app.py                     Streamlit GUI
+api.py                     FastAPI REST API
+ingest.py                  PDF/image → page tiles → FAISS
+search.py                  FAISS + MMR retrieval
+answer.py                  Rerank + figure crop + GPT-4o synthesis
+embed_client.py            HTTP client for the Colab embedding server
+config.py                  Loads config.yaml (no hardcoded defaults)
+config.yaml                All tunable settings
+colab_embed_server.ipynb   Colab notebook — runs the embedding model on GPU
 requirements.txt           Local dependencies (no torch/transformers)
 .env.example               Secret keys template
 data/
-  tiles/                   Saved tile PNG files
-  index.faiss              FAISS index (created after first ingest)
-  metadata.json            Vector ID → source/page/path mapping
+  tiles/                   Page tile PNG files (generated at ingest time)
+  index.faiss              FAISS index
+  metadata.json            Vector ID → source / page / tile path
 ```
