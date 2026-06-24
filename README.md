@@ -158,7 +158,7 @@ Interactive docs available at `http://localhost:8080/docs`
 ```bash
 curl -X POST http://localhost:8080/ask \
   -H "Content-Type: application/json" \
-  -d '{"query": "What is the total amount on the invoice?", "top_k": 5}'
+  -d '{"query": "What is the total amount on the invoice?", "top_k": 10}'
 ```
 
 ```json
