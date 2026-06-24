@@ -1,0 +1,34 @@
+# PixelRAG local app requirements
+# No torch/transformers here — the embedding model runs on Colab
+
+# Document rendering
+pymupdf>=1.23.0          # fitz — PDF to images
+
+# Vector index
+faiss-cpu>=1.7.4
+
+# HTTP client (embed server calls)
+requests>=2.31.0
+
+# GUI
+streamlit>=1.35.0
+
+# REST API
+fastapi>=0.111.0
+uvicorn>=0.30.0
+python-multipart>=0.0.9   # required for FastAPI file uploads
+
+# OpenAI vision (answer synthesis only)
+openai>=1.30.0
+
+# Image handling
+Pillow>=10.0.0
+
+# Numeric
+numpy>=1.26.0
+
+# Env file loading
+python-dotenv>=1.0.0
+
+# Config file parsing
+pyyaml>=6.0

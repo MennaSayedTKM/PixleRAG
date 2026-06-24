@@ -1,0 +1,22 @@
+# PixelRAG Configuration
+# Change settings here without touching any code.
+
+# ── Reranker ─────────────────────────────────────────────────────────────────
+# Which reranker to use before final answer synthesis.
+# Options:
+#   gpt-4o                         — gpt-4o vision reranker (higher accuracy, ~$0.05/query)
+#   jina-reranker-v2-base-multimodal — Jina multimodal reranker (faster, cheaper)
+reranker: gpt-4o
+
+# ── Retrieval ─────────────────────────────────────────────────────────────────
+top_k: 5              # number of pages returned to the user (MMR output)
+mmr_lambda: 0.4       # MMR diversity weight: 0=pure diversity, 1=pure relevance
+rerank_top_n: 4       # pages kept after reranking for final answer synthesis
+
+# ── Ingestion ─────────────────────────────────────────────────────────────────
+pdf_dpi: 300          # PDF rendering resolution
+max_tile_px: 1344     # max image side length sent to embedding model
+
+# ── Answer synthesis ──────────────────────────────────────────────────────────
+answer_model: gpt-4o  # OpenAI model used for synthesis
+crop_min_px: 900      # zoomed crop upscaled to at least this width
